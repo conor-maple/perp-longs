@@ -1,0 +1,594 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Is it a sh*tcoin?</title>
+
+  <!--
+    Shitcoin Classifier — standalone single-file build
+    Opens directly in any modern browser. No tooling required.
+
+    Stack:
+      React 18 UMD + ReactDOM 18 UMD (jsDelivr globals)
+      Babel standalone  — JSX transform only
+      Tailwind CSS play CDN
+      CSS keyframe animations (no framer-motion needed)
+      Inline SVG icon components (no lucide package needed)
+
+    To attach a CoinGecko demo key without rebuilding:
+      Devtools console → window.CG_DEMO_API_KEY = "your-key" → refresh
+  -->
+
+  <!-- React 18 UMD globals -->
+  <script src="https://cdn.jsdelivr.net/npm/react@18/umd/react.development.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/react-dom@18/umd/react-dom.development.js"></script>
+
+  <!-- Babel standalone — JSX only, accesses React from window -->
+  <script src="https://unpkg.com/@babel/standalone@7.24.7/babel.min.js"></script>
+
+  <!-- Tailwind play CDN -->
+  <script src="https://cdn.tailwindcss.com"></script>
+
+  <style>
+    body { -webkit-font-smoothing: antialiased; }
+
+    @keyframes fadeInUp  { from { opacity:0; transform:translateY(10px); } to { opacity:1; transform:translateY(0); } }
+    @keyframes scaleIn   { from { opacity:0; transform:scale(0.97); }      to { opacity:1; transform:scale(1); } }
+    @keyframes pulse     { 0%,100% { opacity:1; } 50% { opacity:.4; } }
+    @keyframes spin      { to { transform:rotate(360deg); } }
+
+    .anim-up            { animation: fadeInUp .3s ease both; }
+    .anim-up-d          { animation: fadeInUp .3s .09s ease both; }
+    .anim-scale         { animation: scaleIn .22s ease both; }
+    .skeleton           { animation: pulse 1.5s ease-in-out infinite; }
+    .spin               { animation: spin 1s linear infinite; }
+
+    /* CSS accordion — no JS height measurement needed */
+    .accordion-wrap     { display:grid; grid-template-rows:0fr; transition: grid-template-rows .22s ease; }
+    .accordion-wrap.open{ grid-template-rows:1fr; }
+    .accordion-inner    { overflow:hidden; }
+  </style>
+</head>
+<body class="min-h-screen bg-neutral-50 text-neutral-900">
+  <div id="root"></div>
+
+  <script type="text/babel">
+    /** @jsxRuntime classic */
+
+    const { useState, useEffect, useRef, useMemo } = React;
+
+    /* ─── Inline SVG icons ──────────────────────────────────────────────────── */
+    const Svg = ({ size=16, className="", children }) => (
+      <svg width={size} height={size} viewBox="0 0 24 24" fill="none"
+        stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round"
+        className={className} aria-hidden="true">{children}</svg>
+    );
+
+    const IcoSearch    = p => <Svg {...p}><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></Svg>;
+    const IcoAlert     = p => <Svg {...p}><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/><path d="M12 9v4"/><path d="M12 17h.01"/></Svg>;
+    const IcoCheck2    = p => <Svg {...p}><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><path d="m9 11 3 3L22 4"/></Svg>;
+    const IcoSkull     = p => <Svg {...p}><path d="M12 2a8 8 0 0 0-8 8v4l-1 1v2h18v-2l-1-1v-4a8 8 0 0 0-8-8z"/><path d="M9 18v2"/><path d="M15 18v2"/><path d="M9 14v.01"/><path d="M15 14v.01"/></Svg>;
+    const IcoRefresh   = p => <Svg {...p}><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></Svg>;
+    const IcoInfo      = p => <Svg {...p}><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></Svg>;
+    const IcoDB        = p => <Svg {...p}><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5V19A9 3 0 0 0 21 19V5"/><path d="M3 12A9 3 0 0 0 21 12"/></Svg>;
+    const IcoScale     = p => <Svg {...p}><path d="m16 16 3-8 3 8c-.87.65-1.92 1-3 1s-2.13-.35-3-1Z"/><path d="m2 16 3-8 3 8c-.87.65-1.92 1-3 1s-2.13-.35-3-1Z"/><path d="M7 21h10"/><path d="M12 3v18"/><path d="M3 7h2c2 0 5-1 7-2 2 1 5 2 7 2h2"/></Svg>;
+    const IcoTrend     = p => <Svg {...p}><polyline points="22 7 13.5 15.5 8.5 10.5 2 17"/><polyline points="16 7 22 7 22 13"/></Svg>;
+    const IcoCopy      = p => <Svg {...p}><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></Svg>;
+    const IcoCheck     = p => <Svg {...p}><path d="M20 6 9 17l-5-5"/></Svg>;
+    const IcoClock     = p => <Svg {...p}><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></Svg>;
+    const IcoTrash     = p => <Svg {...p}><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/></Svg>;
+    const IcoChevron   = p => <Svg {...p}><path d="m6 9 6 6 6-6"/></Svg>;
+    const IcoX         = p => <Svg {...p}><path d="M18 6 6 18"/><path d="m6 6 12 12"/></Svg>;
+
+    /* ─── API constants & helpers ───────────────────────────────────────────── */
+    const API_ROOT    = "https://api.coingecko.com/api/v3";
+    const BASELINE_ID = "fartcoin";
+    const BASE_LABEL  = "Fartcoin";
+    const HIST_KEY    = "shitcoin_clf_v1";
+    const MAX_HIST    = 12;
+
+    function getDemoKey() {
+      try { return String(window.CG_DEMO_API_KEY || ""); } catch { return ""; }
+    }
+
+    function buildUrl(path, params) {
+      const url = new URL(`${API_ROOT}${path}`);
+      for (const [k, v] of Object.entries(params)) url.searchParams.set(k, v);
+      const key = getDemoKey();
+      if (key) url.searchParams.set("x_cg_demo_api_key", key);
+      return url.toString();
+    }
+
+    async function safeFetch(url) {
+      const res = await fetch(url, { headers: { Accept: "application/json" } });
+      if (!res.ok) {
+        const t = await res.text().catch(() => "");
+        throw new Error(`Request failed (${res.status}): ${t || res.statusText}`);
+      }
+      return res.json();
+    }
+
+    async function searchCoins(query) {
+      const data = await safeFetch(buildUrl("/search", { query }));
+      return (data.coins || []).filter(c => c.id && c.name && c.symbol).slice(0, 8);
+    }
+
+    async function fetchPrices(ids) {
+      return safeFetch(buildUrl("/simple/price", {
+        ids: ids.join(","),
+        vs_currencies: "usd",
+        include_market_cap: "true",
+        include_24hr_change: "true",
+        include_last_updated_at: "true",
+      }));
+    }
+
+    /* ─── Classification ────────────────────────────────────────────────────── */
+    function classify(targetId, prices) {
+      const fc  = prices[BASELINE_ID];
+      const tgt = prices[targetId];
+      if (!fc?.usd || !tgt?.usd) throw new Error("Missing price data for comparison.");
+      return {
+        fartcoinPrice: fc.usd,
+        targetPrice:   tgt.usd,
+        fartcoinMcap:  fc.usd_market_cap,
+        targetMcap:    tgt.usd_market_cap,
+        fartcoin24h:   fc.usd_24h_change,
+        target24h:     tgt.usd_24h_change,
+        lastUpdatedAt: Math.min(fc.last_updated_at || Infinity, tgt.last_updated_at || Infinity),
+        verdict:       tgt.usd < fc.usd ? "sh*tcoin" : "not sh*tcoin",
+        ratio:         tgt.usd / fc.usd,
+      };
+    }
+
+    /* ─── Formatters ────────────────────────────────────────────────────────── */
+    function fmtUsd(v) {
+      if (v == null || isNaN(v)) return "—";
+      if (v >= 1)    return v.toLocaleString(undefined, { style:"currency", currency:"USD", maximumFractionDigits:4 });
+      if (v >= 0.01) return v.toLocaleString(undefined, { style:"currency", currency:"USD", minimumFractionDigits:4, maximumFractionDigits:6 });
+      return v.toLocaleString(undefined, { style:"currency", currency:"USD", minimumFractionDigits:6, maximumFractionDigits:10 });
+    }
+    function fmtCompact(v) {
+      if (v == null || isNaN(v)) return "—";
+      return v.toLocaleString(undefined, { style:"currency", currency:"USD", notation:"compact", maximumFractionDigits:2 });
+    }
+    function fmtPct(v) {
+      if (v == null || isNaN(v)) return "—";
+      return `${v >= 0 ? "+" : ""}${v.toFixed(2)}%`;
+    }
+    function pctCls(v) {
+      if (v == null || isNaN(v)) return "text-neutral-500";
+      return v >= 0 ? "text-emerald-600" : "text-red-500";
+    }
+    function fmtTs(unix) {
+      if (!unix || !isFinite(unix)) return "—";
+      return new Date(unix * 1000).toLocaleString();
+    }
+
+    /* ─── History persistence ───────────────────────────────────────────────── */
+    function loadHist()       { try { return JSON.parse(localStorage.getItem(HIST_KEY) || "[]"); } catch { return []; } }
+    function saveHist(h)      { try { localStorage.setItem(HIST_KEY, JSON.stringify(h)); } catch {} }
+    function pushHist(prev, e){ return [e, ...prev.filter(h => h.coinId !== e.coinId)].slice(0, MAX_HIST); }
+
+    /* ─── Sub-components ────────────────────────────────────────────────────── */
+
+    function Bone({ cls }) {
+      return <div className={`skeleton rounded-xl bg-neutral-200 ${cls}`} />;
+    }
+
+    function CopyBtn({ text }) {
+      const [done, setDone] = useState(false);
+      async function doCopy() {
+        try { await navigator.clipboard.writeText(text); setDone(true); setTimeout(() => setDone(false), 2000); } catch {}
+      }
+      return (
+        <button onClick={doCopy}
+          className="inline-flex items-center gap-1.5 rounded-xl border bg-white px-3 py-1.5 text-xs font-medium shadow-sm transition hover:bg-neutral-50 active:scale-95">
+          {done
+            ? <><IcoCheck size={12} className="text-emerald-600" /> Copied!</>
+            : <><IcoCopy size={12} /> Copy verdict</>}
+        </button>
+      );
+    }
+
+    function HistPanel({ history, onRestore, onClear }) {
+      const [open, setOpen] = useState(false);
+      if (!history.length) return null;
+      return (
+        <div className="overflow-hidden rounded-3xl border bg-white shadow-sm">
+          <button onClick={() => setOpen(o => !o)}
+            className="flex w-full items-center justify-between px-6 py-4 transition hover:bg-neutral-50">
+            <span className="flex items-center gap-2 text-sm font-semibold">
+              <IcoClock size={16} className="text-neutral-400" />
+              Recent classifications
+              <span className="rounded-full border bg-neutral-100 px-2 py-0.5 text-xs font-medium text-neutral-500">{history.length}</span>
+            </span>
+            <IcoChevron size={16} className={`text-neutral-400 transition-transform duration-200 ${open ? "rotate-180" : ""}`} />
+          </button>
+
+          <div className={`accordion-wrap ${open ? "open" : ""}`}>
+            <div className="accordion-inner">
+              <div className="space-y-2 px-6 pb-5">
+                {history.map(h => (
+                  <button key={`${h.coinId}-${h.classifiedAt}`} onClick={() => onRestore(h)}
+                    className="flex w-full items-center justify-between gap-3 rounded-2xl border bg-neutral-50 px-4 py-3 text-left text-sm transition hover:bg-neutral-100">
+                    <div className="flex min-w-0 items-center gap-2.5">
+                      {h.thumb
+                        ? <img src={h.thumb} alt="" className="h-7 w-7 shrink-0 rounded-full border object-cover" />
+                        : <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full border bg-neutral-200 text-xs font-bold">{h.symbol.slice(0,2).toUpperCase()}</div>
+                      }
+                      <div className="min-w-0">
+                        <div className="truncate font-medium">{h.coinName}</div>
+                        <div className="text-xs text-neutral-500">{h.symbol.toUpperCase()} · {fmtUsd(h.targetPrice)}</div>
+                      </div>
+                    </div>
+                    <span className={`shrink-0 rounded-full border px-2.5 py-0.5 text-xs font-semibold ${
+                      h.verdict === "sh*tcoin"
+                        ? "border-red-200 bg-red-50 text-red-600"
+                        : "border-emerald-200 bg-emerald-50 text-emerald-700"
+                    }`}>{h.verdict}</span>
+                  </button>
+                ))}
+                <button onClick={onClear} className="mt-1 flex items-center gap-1.5 text-xs text-neutral-400 transition hover:text-red-500">
+                  <IcoTrash size={12} /> Clear history
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    /* ─── Main App ──────────────────────────────────────────────────────────── */
+    function App() {
+      const [query,        setQuery]        = useState("");
+      const [results,      setResults]      = useState([]);
+      const [activeIdx,    setActiveIdx]    = useState(-1);
+      const [selected,     setSelected]     = useState(null);
+      const [clf,          setClf]          = useState(null);
+      const [basePx,       setBasePx]       = useState(null);
+      const [baseCh,       setBaseCh]       = useState(null);
+      const [baseTs,       setBaseTs]       = useState(null);
+      const [loadingBase,  setLoadingBase]  = useState(true);
+      const [loadingSearch,setLoadingSearch]= useState(false);
+      const [loadingClf,   setLoadingClf]   = useState(false);
+      const [error,        setError]        = useState(null);
+      const [history,      setHistory]      = useState(loadHist);
+
+      const debRef    = useRef(null);
+      const searchRef = useRef(null);
+      const resRefs   = useRef([]);
+
+      const verdictStyle = useMemo(() => {
+        if (!clf) return null;
+        return clf.verdict === "sh*tcoin"
+          ? { bg: "border-red-200 bg-red-50 text-red-700",            icon: <IcoSkull size={20} /> }
+          : { bg: "border-emerald-200 bg-emerald-50 text-emerald-700", icon: <IcoCheck2 size={20} /> };
+      }, [clf]);
+
+      const copyText = useMemo(() => {
+        if (!selected || !clf) return "";
+        return [
+          `${selected.name} (${selected.symbol.toUpperCase()}) is ${clf.verdict === "sh*tcoin" ? "a sh*tcoin 💀" : "NOT a sh*tcoin ✅"}`,
+          "",
+          `Price: ${fmtUsd(clf.targetPrice)} vs ${BASE_LABEL} ${fmtUsd(clf.fartcoinPrice)}`,
+          `Ratio: ${clf.ratio.toFixed(4)}×`,
+          "",
+          "— classified with the Fartcoin Reference Classifier",
+        ].join("\n");
+      }, [selected, clf]);
+
+      /* API calls */
+      async function refreshBase() {
+        try {
+          setLoadingBase(true); setError(null);
+          const prices = await fetchPrices([BASELINE_ID]);
+          const row = prices[BASELINE_ID];
+          if (!row?.usd) throw new Error("Could not load Fartcoin baseline price.");
+          setBasePx(row.usd); setBaseCh(row.usd_24h_change ?? null); setBaseTs(row.last_updated_at ?? null);
+        } catch (err) {
+          setError(err.message || "Could not refresh baseline.");
+        } finally { setLoadingBase(false); }
+      }
+
+      async function runClf(coin) {
+        try {
+          setLoadingClf(true); setSelected(coin); setClf(null); setError(null);
+          setQuery(""); setResults([]); setActiveIdx(-1);
+          const prices = await fetchPrices([BASELINE_ID, coin.id]);
+          const result = classify(coin.id, prices);
+          setClf(result);
+          setBasePx(result.fartcoinPrice); setBaseCh(result.fartcoin24h ?? null); setBaseTs(result.lastUpdatedAt ?? null);
+          const entry = {
+            coinId: coin.id, coinName: coin.name, symbol: coin.symbol,
+            thumb: coin.thumb || null, verdict: result.verdict,
+            targetPrice: result.targetPrice, ratio: result.ratio, classifiedAt: Date.now(),
+          };
+          setHistory(prev => { const next = pushHist(prev, entry); saveHist(next); return next; });
+        } catch (err) {
+          setError(err.message || "Could not compare prices.");
+        } finally { setLoadingClf(false); }
+      }
+
+      /* Effects */
+      useEffect(() => { refreshBase(); }, []);
+
+      useEffect(() => {
+        function onKey(e) {
+          if (e.key === "/" && document.activeElement !== searchRef.current) {
+            e.preventDefault(); searchRef.current?.focus();
+          }
+        }
+        window.addEventListener("keydown", onKey);
+        return () => window.removeEventListener("keydown", onKey);
+      }, []);
+
+      useEffect(() => {
+        if (debRef.current) clearTimeout(debRef.current);
+        setActiveIdx(-1);
+        if (!query.trim()) { setResults([]); setLoadingSearch(false); return; }
+        debRef.current = setTimeout(async () => {
+          try {
+            setLoadingSearch(true); setError(null);
+            setResults(await searchCoins(query.trim()));
+          } catch (err) {
+            setError(err.message || "Search failed."); setResults([]);
+          } finally { setLoadingSearch(false); }
+        }, 300);
+        return () => clearTimeout(debRef.current);
+      }, [query]);
+
+      function onSearchKey(e) {
+        if (!results.length && e.key !== "Escape") return;
+        if (e.key === "ArrowDown") {
+          e.preventDefault();
+          setActiveIdx(i => { const n = Math.min(i+1, results.length-1); resRefs.current[n]?.scrollIntoView({block:"nearest"}); return n; });
+        } else if (e.key === "ArrowUp") {
+          e.preventDefault();
+          setActiveIdx(i => { const n = Math.max(i-1,-1); if (n>=0) resRefs.current[n]?.scrollIntoView({block:"nearest"}); return n; });
+        } else if (e.key === "Enter" && activeIdx >= 0) {
+          e.preventDefault(); runClf(results[activeIdx]);
+        } else if (e.key === "Escape") {
+          setQuery(""); setResults([]); setActiveIdx(-1);
+        }
+      }
+
+      /* Render */
+      return (
+        <div className="min-h-screen bg-neutral-50 p-4 md:p-8">
+          <div className="mx-auto grid max-w-6xl gap-6 lg:grid-cols-[1.2fr_0.8fr]">
+
+            {/* ═══ LEFT ═══════════════════════════════════════════════════════ */}
+            <div className="anim-up space-y-6">
+
+              {/* Header / Baseline card */}
+              <div className="rounded-3xl border bg-white p-6 shadow-sm">
+                <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+                  <div>
+                    <div className="mb-2.5 inline-flex items-center gap-2 rounded-full border px-3 py-1 text-xs font-medium text-neutral-500">
+                      💩 Fartcoin Flippening Tracker
+                    </div>
+                    <h1 className="text-3xl font-semibold tracking-tight">Is it a sh*tcoin?</h1>
+                    <p className="mt-2 max-w-lg text-sm leading-6 text-neutral-600">
+                      Search any token, compare its live USD price against <strong>{BASE_LABEL}</strong>,
+                      and get a verdict. No investment advice intended, with the exception of directional longs in leveraged FARTCOIN perps.
+                    </p>
+                  </div>
+                  <button onClick={refreshBase} disabled={loadingBase}
+                    className="inline-flex shrink-0 items-center gap-2 self-start rounded-2xl border px-4 py-2 text-sm font-medium shadow-sm transition hover:bg-neutral-50 disabled:opacity-50">
+                    <IcoRefresh size={16} className={loadingBase ? "spin" : ""} />
+                    Refresh baseline
+                  </button>
+                </div>
+
+                <div className="mt-6 grid gap-4 sm:grid-cols-3">
+                  <div className="rounded-2xl border bg-neutral-50 p-4">
+                    <div className="text-xs uppercase tracking-wide text-neutral-500">Reference asset</div>
+                    <div className="mt-2 text-lg font-semibold">{BASE_LABEL}</div>
+                    <div className="mt-1 text-xs text-neutral-400">id: {BASELINE_ID}</div>
+                  </div>
+                  <div className="rounded-2xl border bg-neutral-50 p-4">
+                    <div className="text-xs uppercase tracking-wide text-neutral-500">Live price</div>
+                    {loadingBase
+                      ? <><Bone cls="mt-2 h-7 w-28" /><Bone cls="mt-1.5 h-4 w-16" /></>
+                      : <>
+                          <div className="mt-2 text-lg font-semibold">{basePx ? fmtUsd(basePx) : "—"}</div>
+                          <div className={`mt-1 text-sm font-medium ${pctCls(baseCh)}`}>24h {fmtPct(baseCh)}</div>
+                        </>
+                    }
+                  </div>
+                  <div className="rounded-2xl border bg-neutral-50 p-4">
+                    <div className="text-xs uppercase tracking-wide text-neutral-500">Last updated</div>
+                    {loadingBase
+                      ? <><Bone cls="mt-2 h-5 w-36" /><Bone cls="mt-1.5 h-4 w-24" /></>
+                      : <>
+                          <div className="mt-2 text-sm font-medium leading-snug">{fmtTs(baseTs)}</div>
+                          <div className="mt-1 text-xs text-neutral-400">As reported by provider</div>
+                        </>
+                    }
+                  </div>
+                </div>
+              </div>
+
+              {/* Search card */}
+              <div className="rounded-3xl border bg-white p-6 shadow-sm">
+                <label className="mb-3 block text-sm font-semibold">
+                  Search token
+                  <span className="ml-2 rounded border px-1.5 py-0.5 font-mono text-xs font-normal text-neutral-400">/</span>
+                </label>
+                <div className="relative">
+                  <IcoSearch size={16} className="pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 text-neutral-400" />
+                  <input ref={searchRef} value={query}
+                    onChange={e => setQuery(e.target.value)}
+                    onKeyDown={onSearchKey}
+                    placeholder="Try BONK, PEPE, SOL, WIF, or a CoinGecko name…"
+                    className="w-full rounded-2xl border bg-white py-3 pl-11 pr-10 text-sm outline-none transition focus:border-neutral-400 focus:ring-2 focus:ring-neutral-100"
+                  />
+                  {query && (
+                    <button onClick={() => { setQuery(""); setResults([]); setActiveIdx(-1); }}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 rounded-full p-1 text-neutral-400 transition hover:text-neutral-700">
+                      <IcoX size={14} />
+                    </button>
+                  )}
+                </div>
+                <div className="mt-3 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-neutral-400">
+                  <IcoDB size={13} />
+                  Debounced live search via CoinGecko ·
+                  <kbd className="rounded border bg-neutral-100 px-1 py-0.5 font-mono text-neutral-500">↑↓</kbd> navigate ·
+                  <kbd className="rounded border bg-neutral-100 px-1 py-0.5 font-mono text-neutral-500">↵</kbd> select ·
+                  <kbd className="rounded border bg-neutral-100 px-1 py-0.5 font-mono text-neutral-500">Esc</kbd> clear
+                </div>
+
+                <div className="mt-5 space-y-2">
+                  {loadingSearch && [0,1,2].map(i => (
+                    <div key={i} className="flex items-center gap-3 rounded-2xl border p-4">
+                      <Bone cls="h-10 w-10 shrink-0 rounded-full" />
+                      <div className="flex-1 space-y-2"><Bone cls="h-4 w-32" /><Bone cls="h-3 w-20" /></div>
+                    </div>
+                  ))}
+
+                  {!loadingSearch && query.trim() && !results.length && (
+                    <div className="rounded-2xl border bg-neutral-50 p-4 text-sm text-neutral-500">No results found.</div>
+                  )}
+
+                  {results.map((coin, idx) => (
+                    <button key={coin.id} ref={el => resRefs.current[idx] = el}
+                      onClick={() => runClf(coin)}
+                      style={{ animationDelay: `${idx * 35}ms` }}
+                      className={`anim-up flex w-full items-center justify-between rounded-2xl border p-4 text-left shadow-sm transition ${
+                        activeIdx === idx
+                          ? "border-neutral-400 bg-neutral-50 ring-2 ring-neutral-200"
+                          : "bg-white hover:bg-neutral-50"
+                      }`}
+                    >
+                      <div className="flex min-w-0 items-center gap-3">
+                        {coin.thumb
+                          ? <img src={coin.thumb} alt={coin.name} className="h-10 w-10 shrink-0 rounded-full border object-cover" />
+                          : <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border bg-neutral-100 text-xs font-bold">{coin.symbol.slice(0,2).toUpperCase()}</div>
+                        }
+                        <div className="min-w-0">
+                          <div className="truncate font-medium">{coin.name}</div>
+                          <div className="text-sm text-neutral-500">{coin.symbol.toUpperCase()} · {coin.id}</div>
+                        </div>
+                      </div>
+                      <div className="shrink-0 text-xs text-neutral-400">Rank {coin.market_cap_rank ?? "—"}</div>
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <HistPanel
+                history={history}
+                onRestore={h => runClf({ id:h.coinId, name:h.coinName, symbol:h.symbol, thumb:h.thumb })}
+                onClear={() => { setHistory([]); saveHist([]); }}
+              />
+            </div>
+
+            {/* ═══ RIGHT ══════════════════════════════════════════════════════ */}
+            <div className="anim-up-d space-y-6">
+
+              {/* Verdict card */}
+              <div className="rounded-3xl border bg-white p-6 shadow-sm">
+                <div className="mb-5 flex items-center justify-between">
+                  <h2 className="text-lg font-semibold">Verdict</h2>
+                  {loadingClf && (
+                    <span className="inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-medium text-neutral-600">
+                      <IcoRefresh size={12} className="spin" /> Comparing…
+                    </span>
+                  )}
+                </div>
+
+                {!selected && !loadingClf && (
+                  <div className="flex flex-col items-center rounded-2xl border border-dashed bg-neutral-50 px-6 py-10 text-center">
+                    <div className="mb-3 text-5xl">💩</div>
+                    <p className="text-sm leading-6 text-neutral-500">
+                      Select a token to classify it against the {BASE_LABEL} baseline.
+                    </p>
+                  </div>
+                )}
+
+                {loadingClf && (
+                  <div className="space-y-4">
+                    <Bone cls="h-16 rounded-2xl" />
+                    <div className="grid grid-cols-2 gap-3"><Bone cls="h-24 rounded-2xl" /><Bone cls="h-24 rounded-2xl" /></div>
+                    <Bone cls="h-20 rounded-2xl" />
+                    <div className="grid grid-cols-2 gap-3"><Bone cls="h-20 rounded-2xl" /><Bone cls="h-20 rounded-2xl" /></div>
+                  </div>
+                )}
+
+                {selected && clf && verdictStyle && !loadingClf && (
+                  <div key={`${selected.id}-${clf.targetPrice}`} className="anim-scale space-y-4">
+                    <div className={`flex items-start gap-3 rounded-2xl border p-4 ${verdictStyle.bg}`}>
+                      <div className="mt-0.5 shrink-0">{verdictStyle.icon}</div>
+                      <div className="min-w-0 flex-1">
+                        <div className="text-xs uppercase tracking-wide opacity-70">Classification result</div>
+                        <div className="mt-0.5 truncate text-xl font-bold">
+                          {selected.name} is <span className="font-black">{clf.verdict}</span>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="flex justify-end"><CopyBtn text={copyText} /></div>
+
+                    <div className="grid grid-cols-2 gap-3">
+                      <div className="rounded-2xl border bg-neutral-50 p-4">
+                        <div className="text-xs uppercase tracking-wide text-neutral-500">{selected.name}</div>
+                        <div className="mt-2 text-xl font-semibold">{fmtUsd(clf.targetPrice)}</div>
+                        <div className={`mt-1 text-sm font-medium ${pctCls(clf.target24h)}`}>24h {fmtPct(clf.target24h)}</div>
+                      </div>
+                      <div className="rounded-2xl border bg-neutral-50 p-4">
+                        <div className="text-xs uppercase tracking-wide text-neutral-500">{BASE_LABEL}</div>
+                        <div className="mt-2 text-xl font-semibold">{fmtUsd(clf.fartcoinPrice)}</div>
+                        <div className={`mt-1 text-sm font-medium ${pctCls(clf.fartcoin24h)}`}>24h {fmtPct(clf.fartcoin24h)}</div>
+                      </div>
+                    </div>
+
+                    <div className="rounded-2xl border p-4">
+                      <div className="flex items-center gap-2 text-sm font-medium text-neutral-700">
+                        <IcoTrend size={16} /> Relative price ratio
+                      </div>
+                      <div className="mt-2 text-3xl font-bold">{clf.ratio.toFixed(4)}×</div>
+                      <div className="mt-1 text-sm text-neutral-500">{selected.name} price ÷ {BASE_LABEL} price</div>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-3">
+                      <div className="rounded-2xl border bg-neutral-50 p-4">
+                        <div className="text-xs uppercase tracking-wide text-neutral-500">{selected.name} mkt cap</div>
+                        <div className="mt-2 text-lg font-semibold">{fmtCompact(clf.targetMcap)}</div>
+                      </div>
+                      <div className="rounded-2xl border bg-neutral-50 p-4">
+                        <div className="text-xs uppercase tracking-wide text-neutral-500">{BASE_LABEL} mkt cap</div>
+                        <div className="mt-2 text-lg font-semibold">{fmtCompact(clf.fartcoinMcap)}</div>
+                      </div>
+                    </div>
+
+                    <div className="text-xs text-neutral-400">Provider update: {fmtTs(clf.lastUpdatedAt)}</div>
+                  </div>
+                )}
+              </div>
+
+
+              {/* Error banner */}
+              {error && (
+                <div className="anim-up flex items-start justify-between gap-3 rounded-3xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">
+                  <div className="flex items-start gap-2">
+                    <IcoAlert size={16} className="mt-0.5 shrink-0" />
+                    <span>{error}</span>
+                  </div>
+                  <button onClick={() => setError(null)} className="shrink-0 rounded-lg p-1 transition hover:bg-red-100">
+                    <IcoX size={14} />
+                  </button>
+                </div>
+              )}
+            </div>
+
+          </div>
+        </div>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+  </script>
+</body>
+</html>
